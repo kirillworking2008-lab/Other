@@ -27,7 +27,7 @@ NEW_SHORT = "Клячин К.Е."
 OLD_NUM = "21574"
 NEW_NUM = "02403"
 OLD_TOPIC_1 = "Монтаж элек"
-NEW_TOPIC_1 = "Проверка электрических схем"
+NEW_TOPIC_1 = "Проверка электрических схем "
 OLD_TOPIC_2 = "трических схем приборов для измерения расхода жидкости"
 NEW_TOPIC_2 = "низковольтных цепей при монтаже"
 
@@ -102,6 +102,8 @@ def edit_header(section, pairs):
         for old, new in pairs:
             if t.text == old:
                 t.text = new
+                if new != new.strip():
+                    t.set(qn("xml:space"), "preserve")
             elif old in t.text and old not in ("11",):
                 t.text = t.text.replace(old, new)
 
@@ -316,10 +318,16 @@ def main():
         elif kind == "table":
             add_table(doc, block[1])
 
+    # --- каждый рисунок завершает страницу: следующий абзац начинается с новой
+    paras = doc.paragraphs
+    for i, p in enumerate(paras):
+        if p.text.startswith("Рисунок ") and " – " in p.text and i + 1 < len(paras):
+            paras[i + 1].paragraph_format.page_break_before = True
+
     # --- штамп: ФИО, номер работы, тема, число листов
     edit_header(doc.sections[1], [(OLD_SHORT, NEW_SHORT), (OLD_NUM, NEW_NUM),
                                   (OLD_TOPIC_1, NEW_TOPIC_1), (OLD_TOPIC_2, NEW_TOPIC_2),
-                                  ("11", str(total_pages))])
+                                  ("11", str(total_pages - 1))])
     edit_header(doc.sections[2], [(OLD_NUM, NEW_NUM)])
     for sec in (doc.sections[1], doc.sections[2]):
         fix_frame(sec)

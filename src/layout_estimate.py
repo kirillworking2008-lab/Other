@@ -129,6 +129,7 @@ def estimate(blocks, start_page=3):
             fl.add_lines(wrap_lines(b[1], 14, TEXT_W - 0.75, 0.0, 0.0))
         elif kind == "fig":
             fl.add_block(fig_height(os.path.join(BASE, b[1]), b[3]))
+            fl.new_page()          # рисунок завершает страницу
         elif kind == "table":
             fl.add_block(table_height(b[1]))
     return toc, fl.page
