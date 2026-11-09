@@ -111,8 +111,8 @@ def estimate(blocks, start_page=3):
         elif kind in ("h1", "title_h1"):
             n = max(1, wrap_lines(b[1], 14, TEXT_W, 0, 0))
             h = n * LINE_H + 0.42
-            if kind in ("h1", "title_h1") and fl.used + h + 2 * LINE_H > TEXT_H:
-                fl.new_page()
+            if kind in ("h1", "title_h1") and fl.used > 0:
+                fl.new_page()          # каждый раздел — с новой страницы
             fl.add_block(h)
             toc.append((b[1], fl.page))
         elif kind == "h2":
@@ -129,7 +129,6 @@ def estimate(blocks, start_page=3):
             fl.add_lines(wrap_lines(b[1], 14, TEXT_W - 0.75, 0.0, 0.0))
         elif kind == "fig":
             fl.add_block(fig_height(os.path.join(BASE, b[1]), b[3]))
-            fl.new_page()          # рисунок завершает страницу
         elif kind == "table":
             fl.add_block(table_height(b[1]))
     return toc, fl.page

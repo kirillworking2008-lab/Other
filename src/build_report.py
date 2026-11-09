@@ -318,11 +318,15 @@ def main():
         elif kind == "table":
             add_table(doc, block[1])
 
-    # --- каждый рисунок завершает страницу: следующий абзац начинается с новой
-    paras = doc.paragraphs
-    for i, p in enumerate(paras):
-        if p.text.startswith("Рисунок ") and " – " in p.text and i + 1 < len(paras):
-            paras[i + 1].paragraph_format.page_break_before = True
+    # --- каждый раздел начинается с новой страницы (рисунки стоят в конце разделов)
+    heads = [b[1] for b in C.BLOCKS if b[0] in ("h1", "title_h1")]
+    first_done = False
+    for p in doc.paragraphs:
+        if p.text in heads:
+            if not first_done:
+                first_done = True          # «Введение» и так с новой страницы
+                continue
+            p.paragraph_format.page_break_before = True
 
     # --- штамп: ФИО, номер работы, тема, число листов
     edit_header(doc.sections[1], [(OLD_SHORT, NEW_SHORT), (OLD_NUM, NEW_NUM),
