@@ -12,6 +12,7 @@ import re
 
 from docx import Document
 from docx.oxml.ns import qn
+from docx.text.paragraph import Paragraph
 from PIL import Image
 import io
 
@@ -303,6 +304,15 @@ TABLES = [
     ],
 ]
 
+# ---------------------------------------------------------------- список литературы
+LIT = [
+    "1. ГОСТ IEC 61439-6-2017. Низковольтные комплектные устройства распределения "
+    "и управления. Часть 6. Системы сборных шин (шинопроводы) : сайт – URL: "
+    "https://docs.cntd.ru (Дата обращения 11.11.2026) – Текст : электронный",
+    "2. ГОСТ Р 50571.16-2019. Электроустановки низковольтные. Часть 6. Испытания : "
+    "сайт – URL: https://docs.cntd.ru (Дата обращения 09.11.2026) – Текст : электронный",
+]
+
 # ---------------------------------------------------------------- рисунок 1
 IMAGE_REPL = {0: "photos/shinoprovod.jpg",
               1: "photos/otvetvitelnaya.jpg",
@@ -386,6 +396,23 @@ def main():
     # рисунок 1 — под тему
     for idx, path in IMAGE_REPL.items():
         replace_image(doc, idx, path)
+
+    # ---- список литературы: п.1 — ГОСТ IEC 61439-6-2017 (нормативная база из §1),
+    # ---- ГОСТ Р 50571.16-2019 остаётся в списке вторым пунктом
+    ps_now = doc.paragraphs
+    first = ps_now[148]
+    twin = copy.deepcopy(first._p)
+    set_text(first, LIT[0])
+    first._p.addnext(twin)
+    set_text(Paragraph(twin, first._parent), LIT[1])
+    num = re.compile(r"^\d+\.\s*")
+    n = 0
+    for par in doc.paragraphs[148:]:
+        if not num.match(par.text):
+            break
+        n += 1
+        set_text(par, num.sub("%d. " % n, par.text, count=1))
+    assert n == 8, n   # 7 пунктов исходника + добавленный ГОСТ Р 50571.16-2019
 
     # штамп в колонтитулах
     for name in doc.part.package.parts:
