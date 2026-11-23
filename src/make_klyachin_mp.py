@@ -11,6 +11,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
 from PIL import Image
+from lxml import etree
 
 SRC = "Отчёт по УП.01 Клячин-3.docx"
 OUT = "Отчёт по УП.01 Клячин-4.docx"
@@ -225,9 +226,9 @@ TABLES = [
         ["Набор отвёрток", "Снятие кольца, стекла, крепёжных винтов", "Шлицевые и крестовые, рукоятки изолированные"],
         ["Ключ под резьбу М20×1,5", "Монтаж прибора на поверочном прессе", "Рожковый или торцевой, сталь"],
         ["Съёмник стрелок", "Снятие стрелки с оси трибки", "Усилие по оси, без перекоса"],
-        ["Лупа и штангенциркуль", "Осмотр деталей, контроль размеров", "Увеличение не менее 4 крат, цена деления 0,05 мм"],
-        ["Ультразвуковая ванна", "Промывка механизма от загрязнений", "Частота 40 кГц, время обработки 3–5 мин"],
-        ["Поверочный пресс с образцовым манометром", "Опрессовка и оценка погрешности", "Образцовый прибор класса 0,4, диапазон до 60 МПа"],
+        ["Лупа и штангенциркуль", "Осмотр деталей, контроль размеров", "Увеличение 4 крат, цена деления 0,05 мм"],
+        ["Ультразвуковая ванна", "Промывка механизма", "Частота 40 кГц, 3–5 мин"],
+        ["Поверочный пресс", "Опрессовка и оценка погрешности", "Образцовый прибор класса 0,4, до 60 МПа"],
     ],
     [   # таблица 2 — характеристики МТИ-1232
         ["Параметр", "Значение", "Нормативный документ"],
@@ -292,8 +293,18 @@ def set_text(par, text):
         r.text = ""
 
 
+def drop_src_rect(shape):
+    """В исходных рамках стояла обрезка a:srcRect от старых картинок.
+    После замены изображения она режет новый рисунок — убираем."""
+    for el in shape._inline.iter(
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}srcRect"
+    ):
+        el.getparent().remove(el)
+
+
 def replace_image(doc, index, path):
     shape = doc.inline_shapes[index]
+    drop_src_rect(shape)
     rid = shape._inline.graphic.graphicData.pic.blipFill.blip.get(qn("r:embed"))
     part = doc.part.related_parts[rid]
     ratio = shape.width / shape.height
@@ -359,10 +370,7 @@ def fix_titul(doc):
             par.runs[0].text = head + "_" * 28
             for r in par.runs[1:]:
                 r.text = ""
-    # содержание всегда начинается с новой страницы
-    for par in ps:
-        if par.text.strip() == "СОДЕРЖАНИЕ":
-            par.paragraph_format.page_break_before = True
+    # содержание открывает отдельную секцию — разрыв страницы даёт сама секция
     idx = next((i for i, p in enumerate(ps) if p.text.strip() == "Тюмень"), None)
     if idx is None:
         return
@@ -395,6 +403,193 @@ def keep_tables_whole(doc):
                 for cell in row.cells:
                     for par in cell.paragraphs:
                         par.paragraph_format.keep_with_next = True
+
+
+def tidy_figures(doc):
+    """Убираем пустые абзацы вокруг рисунков и подписей (они «съедали» по 1–2 см
+    и выталкивали таблицы на следующий лист) и слегка уменьшаем рисунок 2."""
+    ps = doc.paragraphs
+    def is_fig(par):
+        return "graphicData" in par._p.xml
+
+    def is_caption(par):
+        return par.text.strip().startswith("Рисунок ")
+
+    def is_empty(par):
+        xml = par._p.xml
+        return (
+            not par.text.strip()
+            and "graphicData" not in xml
+            and "w:sectPr" not in xml
+            and 'w:type="page"' not in xml
+        )
+
+    for i in range(len(ps) - 1, -1, -1):
+        par = ps[i]
+        if not is_empty(par):
+            continue
+        prev_par = ps[i - 1] if i else None
+        next_par = ps[i + 1] if i + 1 < len(ps) else None
+        near = any(
+            x is not None and (is_fig(x) or is_caption(x))
+            for x in (prev_par, next_par)
+        )
+        if near:
+            par._p.getparent().remove(par._p)
+
+    for par in doc.paragraphs:
+        if is_fig(par):
+            par.paragraph_format.line_spacing = 1.0
+    # рисунок 2 — чуть меньше, чтобы раздел 3 уложился на один лист
+    shapes = doc.inline_shapes
+    if len(shapes) > 1:
+        sh = shapes[1]
+        ratio = sh.width / sh.height
+        sh.width = Cm(4.0)
+        sh.height = Cm(round(4.0 / ratio, 2))
+
+
+def compact_tables(doc):
+    """Таблицы должны укладываться на лист целиком: кегль 11 (МУ допускает
+    не менее 10) и минимальные внутренние отступы ячеек."""
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
+
+    for table in doc.tables:
+        tblPr = table._tbl.tblPr
+        old = tblPr.find(qn("w:tblCellMar"))
+        if old is not None:
+            tblPr.remove(old)
+        tblPr.append(
+            parse_xml(
+                f'<w:tblCellMar {nsdecls("w")}>'
+                '<w:top w:w="14" w:type="dxa"/><w:left w:w="80" w:type="dxa"/>'
+                '<w:bottom w:w="14" w:type="dxa"/><w:right w:w="80" w:type="dxa"/>'
+                "</w:tblCellMar>"
+            )
+        )
+        for row in table.rows:
+            for cell in row.cells:
+                for par in cell.paragraphs:
+                    par.paragraph_format.space_before = Pt(0)
+                    par.paragraph_format.space_after = Pt(0)
+                    for r in par.runs:
+                        r.font.size = Pt(11)
+
+
+def add_toc_pagerefs(doc):
+    """Номера страниц в содержании — поля PAGEREF на закладки заголовков,
+    чтобы при любом сдвиге вёрстки они пересчитывались сами."""
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
+
+    RPR = (
+        f'<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/>'
+        f'<w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr>'
+    )
+    ps = doc.paragraphs
+    start = next((i for i, p in enumerate(ps) if p.text.strip() == "СОДЕРЖАНИЕ"), None)
+    if start is None:
+        return
+    rows = []
+    for i in range(start + 1, len(ps)):
+        if "\t" in ps[i].text:
+            rows.append(i)
+        elif ps[i].text.strip() and rows:
+            break
+    bm_id = 900
+    for n, i in enumerate(rows, 1):
+        par = ps[i]
+        title, _, page = par.text.partition("\t")
+        title = title.strip()
+        page = re.sub(r"\D", "", page) or "1"
+        target = next(
+            (p for p in ps[rows[-1] + 1 :] if p.text.strip() == title), None
+        )
+        if target is None:
+            continue
+        bm = "_RefHeading%d" % n
+        bm_id += 1
+        bs = parse_xml(f'<w:bookmarkStart {nsdecls("w")} w:id="{bm_id}" w:name="{bm}"/>')
+        pPr = target._p.find(qn("w:pPr"))
+        if pPr is not None:
+            pPr.addnext(bs)
+        else:
+            target._p.insert(0, bs)
+        target._p.append(
+            parse_xml(f'<w:bookmarkEnd {nsdecls("w")} w:id="{bm_id}"/>')
+        )
+        runs = par.runs
+        idx = next((k for k, r in enumerate(runs) if "\t" in (r.text or "")), None)
+        if idx is None:
+            continue
+        tabrun = runs[idx]
+        tabrun.text = "\t"
+        for r in runs[idx + 1 :]:
+            r.text = ""
+        anchor = tabrun._r
+        parts = [
+            f'<w:r {nsdecls("w")}>{RPR}<w:fldChar w:fldCharType="begin"/></w:r>',
+            f'<w:r {nsdecls("w")}>{RPR}<w:instrText xml:space="preserve"> PAGEREF {bm} \\h </w:instrText></w:r>',
+            f'<w:r {nsdecls("w")}>{RPR}<w:fldChar w:fldCharType="separate"/></w:r>',
+            f'<w:r {nsdecls("w")}>{RPR}<w:t>{page}</w:t></w:r>',
+            f'<w:r {nsdecls("w")}>{RPR}<w:fldChar w:fldCharType="end"/></w:r>',
+        ]
+        for xml in parts:
+            el = parse_xml(xml)
+            anchor.addnext(el)
+            anchor = el
+
+
+def auto_page_total(doc):
+    """Графа «Листов» в основной надписи — поле NUMPAGES вместо числа."""
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
+
+    W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    for part in doc.part.package.parts:
+        if not str(part.partname).startswith("/word/header"):
+            continue
+        ts = list(part.element.iter(W + "t"))
+        for k, t in enumerate(ts[:-1]):
+            if (t.text or "").strip() != "Листов":
+                continue
+            nxt = ts[k + 1]
+            run = nxt.getparent()
+            rpr = run.find(qn("w:rPr"))
+            rpr_xml = (
+                etree.tostring(rpr, encoding="unicode") if rpr is not None else ""
+            )
+            cached = (nxt.text or "13").strip()
+            anchor = run
+            for xml in (
+                f'<w:r {nsdecls("w")}>{rpr_xml}<w:fldChar w:fldCharType="begin"/></w:r>',
+                f'<w:r {nsdecls("w")}>{rpr_xml}<w:instrText xml:space="preserve"> NUMPAGES </w:instrText></w:r>',
+                f'<w:r {nsdecls("w")}>{rpr_xml}<w:fldChar w:fldCharType="separate"/></w:r>',
+                f'<w:r {nsdecls("w")}>{rpr_xml}<w:t>{cached}</w:t></w:r>',
+                f'<w:r {nsdecls("w")}>{rpr_xml}<w:fldChar w:fldCharType="end"/></w:r>',
+            ):
+                el = parse_xml(xml)
+                anchor.addnext(el)
+                anchor = el
+            run.getparent().remove(run)
+            break
+
+
+def enable_update_fields(doc):
+    """Word пересчитывает поля (содержание, «Листов») при открытии файла."""
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
+
+    settings = doc.settings.element
+    if settings.find(qn("w:updateFields")) is not None:
+        return
+    el = parse_xml(f'<w:updateFields {nsdecls("w")} w:val="true"/>')
+    anchor = settings.find(qn("w:hdrShapeDefaults")) or settings.find(qn("w:compat"))
+    if anchor is not None:
+        anchor.addprevious(el)
+    else:
+        settings.append(el)
 
 
 def merge_titul_and_toc(doc):
@@ -490,6 +685,7 @@ def main():
         elif i in captions_tbl:
             pf.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             pf.first_line_indent = Cm(1.25)
+            pf.space_before = Pt(8)
             pf.keep_with_next = True          # подпись не отрывается от таблицы
             for r in par.runs:                # МУ: кегль текста 14, в таблице — не менее 10
                 r.font.size = Pt(14)
@@ -594,7 +790,15 @@ def main():
     keep_tables_whole(doc)
 
     # 10. содержание без номера страницы: объединяем титул и содержание в одну секцию без колонтитула
-    merge_titul_and_toc(doc)
+    # титул, содержание и основная часть — три секции (как в исходном файле):
+    # содержание и все листы основной части с рамкой и штампом
+    # merge_titul_and_toc(doc)  # не объединяем: тогда лист содержания остаётся без рамки
+
+    tidy_figures(doc)
+    compact_tables(doc)
+    add_toc_pagerefs(doc)
+    auto_page_total(doc)
+    enable_update_fields(doc)
 
     doc.save(OUT)
     print("сохранено:", OUT, os.path.getsize(OUT), "байт")
