@@ -9,6 +9,7 @@ import re
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
+from stamp_fix import rebuild_page_number
 from docx.shared import Cm, Pt
 from PIL import Image
 from lxml import etree
@@ -914,6 +915,7 @@ def main():
     add_toc_pagerefs(doc)
     auto_page_total(doc)
     simplify_header_fields(doc)
+    rebuild_page_number(doc)
     enable_update_fields(doc)
 
     # режим совместимости: Word 2013+ (иначе поля в фигурах не пересчитываются)
