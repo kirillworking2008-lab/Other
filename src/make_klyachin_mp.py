@@ -9,13 +9,14 @@ import re
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
-from stamp_fix import rebuild_page_number
+from stamp_fix import rebuild_page_number, add_footer_page_number
 from docx.shared import Cm, Pt
 from PIL import Image
 from lxml import etree
 
 SRC = "Отчёт по УП.01 Клячин-3.docx"
 WORK_INDEX = "УП.02"
+DESIGNATION = "УП.02.-15.01.37-0240-2026"   # шифр в штампе: формат бланка кафедры
 OUT = "Отчёт по УП.02 Клячин.docx"
 
 # ------------------------------------------------------------------ текст
@@ -877,7 +878,7 @@ def main():
                 ):
                     acc += texts[j].text or ""
                     j += 1
-                texts[i].text = "15.01.37.0240.2026." + WORK_INDEX
+                texts[i].text = DESIGNATION
                 for t in texts[i + 1 : j]:
                     t.text = ""
                 i = j
@@ -916,6 +917,7 @@ def main():
     auto_page_total(doc)
     simplify_header_fields(doc)
     rebuild_page_number(doc)
+    add_footer_page_number(doc)
     enable_update_fields(doc)
 
     # режим совместимости: Word 2013+ (иначе поля в фигурах не пересчитываются)

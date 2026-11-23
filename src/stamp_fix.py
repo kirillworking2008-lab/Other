@@ -72,6 +72,23 @@ _ANCHOR = '''<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/20
   </wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>'''
 
 
+_STATIC_RUN = ('<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+               '<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/>'
+               '<w:noProof/><w:sz w:val="24"/><w:lang w:val="ru-RU"/></w:rPr>'
+               '<w:t>{}</w:t></w:r>')
+
+
+def _freeze_number(shape, value):
+    """Лист содержания один: вместо поля PAGE оставляем обычный текст — его
+    показывают все редакторы и он не требует обновления полей."""
+    for fld in shape.iter(_W + "fldSimple"):
+        fld.addnext(parse_xml(_STATIC_RUN.format(value)))
+        fld.getparent().remove(fld)
+    for t in shape.iter(_W + "t"):
+        if (t.text or "").strip().isdigit():
+            t.text = value
+
+
 def _strip_spaces(shape):
     ts = list(shape.iter(_W + "t"))
     if not ts:
@@ -100,6 +117,9 @@ def _resize_vml(el, x, width):
     el.set("style", st)
 
 
+ADD_ANCHOR = False   # номер листа ставим в колонтитул (footer), а не фигурой
+
+
 def rebuild_page_number(doc):
     for part in doc.part.package.parts:
         tag = str(part.partname).split("/")[-1].replace(".xml", "")
@@ -116,7 +136,10 @@ def rebuild_page_number(doc):
                 continue
             if txt.isdigit():
                 if lo <= int(off.get("x")) <= hi:
-                    shape.getparent().remove(shape)
+                    if tag == "header1":
+                        _freeze_number(shape, _NUM_FIRST[tag])
+                    else:
+                        shape.getparent().remove(shape)
                 continue
             fix = _LABEL_FIX[tag].get(txt)
             if fix and fix[0] <= int(off.get("x")) <= fix[1]:
@@ -141,7 +164,10 @@ def rebuild_page_number(doc):
                     continue
                 if txt.isdigit():
                     if lo <= _vml_left(el) <= hi:
-                        el.getparent().remove(el)
+                        if tag == "header1":
+                            _freeze_number(el, _NUM_FIRST[tag])
+                        else:
+                            el.getparent().remove(el)
                     continue
                 fix = _LABEL_FIX[tag].get(txt)
                 if fix and fix[0] <= _vml_left(el) <= fix[1]:
@@ -150,8 +176,42 @@ def rebuild_page_number(doc):
                         tb.set("inset", "0,0,0,0")
                     _strip_spaces(el)
 
-        x, y, w, h = _NUM_BOX[tag]
-        did = 9100 if tag == "header2" else 9101
-        root.find(".//" + _W + "p").append(parse_xml(_ANCHOR.format(
-            did=did, x=int(x * _MM), y=int(y * _MM),
-            cx=int(w * _MM), cy=int(h * _MM), text=_NUM_FIRST[tag])))
+        if ADD_ANCHOR:
+            x, y, w, h = _NUM_BOX[tag]
+            did = 9100 if tag == "header2" else 9101
+            root.find(".//" + _W + "p").append(parse_xml(_ANCHOR.format(
+                did=did, x=int(x * _MM), y=int(y * _MM),
+                cx=int(w * _MM), cy=int(h * _MM), text=_NUM_FIRST[tag])))
+
+
+def add_footer_page_number(doc):
+    """Номер листа для графы «Лист» штампа — обычным полем PAGE в нижнем колонтитуле.
+
+    Фигуру с полем внутри группы фигур часть редакторов (мобильный Word, WPS,
+    предпросмотр) не рисует вовсе, поэтому графа оставалась пустой. Колонтитул —
+    обычное содержимое страницы, его показывают все редакторы.
+    """
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Mm, Pt
+
+    # номер секции: (расстояние колонтитула от низа страницы, отступ справа, кеш номера)
+    specs = {2: (10.0, 0.0, "3")}
+
+    for idx, (dist, rind, cached) in specs.items():
+        sec = doc.sections[idx]
+        sec.footer_distance = Mm(dist)
+        sec.footer.is_linked_to_previous = False
+        par = sec.footer.paragraphs[0]
+        for run in list(par.runs):
+            run._r.getparent().remove(run._r)
+        par.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        fmt = par.paragraph_format
+        fmt.right_indent = Mm(rind)
+        fmt.space_before = Pt(0)
+        fmt.space_after = Pt(0)
+        par._p.append(parse_xml(
+            '<w:fldSimple xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+            ' w:instr=" PAGE  \\* MERGEFORMAT " w:dirty="true"><w:r><w:rPr>'
+            '<w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/>'
+            '<w:sz w:val="20"/><w:lang w:val="ru-RU"/></w:rPr>'
+            '<w:t>%s</w:t></w:r></w:fldSimple>' % cached))
