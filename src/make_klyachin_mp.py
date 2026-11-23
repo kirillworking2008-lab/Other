@@ -460,6 +460,65 @@ def link_urls(doc):
             hl.addnext(tail)
 
 
+def simplify_header_fields(doc):
+    """Поля PAGE/NUMPAGES внутри фигур колонтитула Word иногда не пересчитывает
+    (в штампе застывал номер). Переводим сложные поля в простые w:fldSimple
+    с флагом dirty — Word обновляет их при открытии и на каждой странице."""
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
+
+    W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    for part in doc.part.package.parts:
+        name = str(part.partname)
+        if not (name.startswith("/word/header") or name == "/word/document.xml"):
+            continue
+        root = part.element
+        for fld in list(root.iter(W + "fldChar")):
+            if fld.get(W + "fldCharType") != "begin":
+                continue
+            run = fld.getparent()
+            parent = run.getparent()
+            if parent is None:
+                continue
+            kids = list(parent)
+            if run not in kids:
+                continue
+            i = kids.index(run)
+            instr, cached, nodes, state, closed = "", [], [], "instr", False
+            j = i + 1
+            while j < len(kids):
+                el = kids[j]
+                nodes.append(el)
+                if el.tag == W + "r":
+                    it = el.find(W + "instrText")
+                    fc = el.find(W + "fldChar")
+                    if it is not None:
+                        instr += it.text or ""
+                    elif fc is not None:
+                        t = fc.get(W + "fldCharType")
+                        if t == "separate":
+                            state = "result"
+                        elif t == "end":
+                            closed = True
+                            break
+                    elif state == "result":
+                        cached.append(el)
+                j += 1
+            if not closed or not instr.strip():
+                continue
+            if not instr.strip().startswith(("PAGE", "NUMPAGES", "PAGEREF")):
+                continue
+            simple = parse_xml(
+                f'<w:fldSimple {nsdecls("w")} w:instr="{instr.strip()}" w:dirty="true"/>'
+            )
+            for el in cached:
+                simple.append(copy.deepcopy(el))
+            run.addnext(simple)
+            for el in nodes:
+                parent.remove(el)
+            parent.remove(run)
+
+
 def tidy_figures(doc):
     """Убираем пустые абзацы вокруг рисунков и подписей (они «съедали» по 1–2 см
     и выталкивали таблицы на следующий лист) и слегка уменьшаем рисунок 2."""
@@ -854,7 +913,14 @@ def main():
     link_urls(doc)
     add_toc_pagerefs(doc)
     auto_page_total(doc)
+    simplify_header_fields(doc)
     enable_update_fields(doc)
+
+    # режим совместимости: Word 2013+ (иначе поля в фигурах не пересчитываются)
+    settings = doc.settings.element
+    for cs in settings.iter(qn("w:compatSetting")):
+        if cs.get(qn("w:name")) == "compatibilityMode":
+            cs.set(qn("w:val"), "15")
 
     for part in doc.part.package.parts:
         if not str(part.partname).startswith("/word/") or not hasattr(part, "element"):
