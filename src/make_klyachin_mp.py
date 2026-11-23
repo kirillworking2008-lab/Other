@@ -14,7 +14,8 @@ from PIL import Image
 from lxml import etree
 
 SRC = "Отчёт по УП.01 Клячин-3.docx"
-OUT = "Отчёт по УП.01 Клячин-4.docx"
+WORK_INDEX = "УП.02"
+OUT = "Отчёт по УП.02 Клячин.docx"
 
 # ------------------------------------------------------------------ текст
 TEXT = {
@@ -375,6 +376,13 @@ def fix_titul(doc):
             par.runs[0].text = head + "_" * 28
             for r in par.runs[1:]:
                 r.text = ""
+    # индекс практики на титульном листе
+    for par in ps:
+        if par.text.strip().startswith("ПО УП."):
+            par.runs[0].text = f"ПО {WORK_INDEX} УЧЕБНОЙ ПРАКТИКЕ"
+            for r in par.runs[1:]:
+                r.text = ""
+
     # содержание открывает отдельную секцию — разрыв страницы даёт сама секция
     idx = next((i for i, p in enumerate(ps) if p.text.strip() == "Тюмень"), None)
     if idx is None:
@@ -809,7 +817,7 @@ def main():
                 ):
                     acc += texts[j].text or ""
                     j += 1
-                texts[i].text = "15.01.37.0240.2026.УП.01"
+                texts[i].text = "15.01.37.0240.2026." + WORK_INDEX
                 for t in texts[i + 1 : j]:
                     t.text = ""
                 i = j
@@ -847,6 +855,15 @@ def main():
     add_toc_pagerefs(doc)
     auto_page_total(doc)
     enable_update_fields(doc)
+
+    for part in doc.part.package.parts:
+        if not str(part.partname).startswith("/word/") or not hasattr(part, "element"):
+            continue
+        for t in part.element.iter(
+            "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t"
+        ):
+            if t.text and "УП.01" in t.text:
+                t.text = t.text.replace("УП.01", WORK_INDEX)
 
     doc.save(OUT)
     print("сохранено:", OUT, os.path.getsize(OUT), "байт")
